@@ -29,6 +29,8 @@ int editorOpenFile(char* path)
 
     fprintf(file, rows[0]->buffer);
 
+    return 1;
+
   }
   else
   {
@@ -57,7 +59,7 @@ int editorOpenFile(char* path)
       rows[seenrow]->buffer = strdup(buffer);
       rows[seenrow]->len = strlen(buffer);
 
-      printf("%s", rows[seenrow]->buffer);
+      //printf("%s", rows[seenrow]->buffer);
 
 
       rows[seenrow]->buffer = strdup(buffer);
@@ -65,6 +67,8 @@ int editorOpenFile(char* path)
 
       seenrow++;
     }
+
+    return 0;
   }
 
   fclose(file);
