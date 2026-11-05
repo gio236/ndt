@@ -4,8 +4,17 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <ctype.h>
 
-#define CLEAR "\033[H\033[2J"
+/*
+• \033[N A: Muove il cursore Su di N righe.
+• \033[N B: Muove il cursore Giù di N righe.
+• \033[N C: Muove il cursore a Destra di N colonne.
+• \033[N D: Muove il cursore a Sinistra di N colonne.
+*/
+
+#define CLEAR printf("\033[H\033[2J")
+#define GOTOYX(row, col) printf("\033[%d;%dH", (row), (col))
 
 typedef struct
 {
@@ -13,10 +22,23 @@ typedef struct
   size_t len;
 } row;
 
-row **rows;
-int capacity = 1;
+typedef struct
+{
+  int x;
+  int y;
+} cursor;
 
+
+row **rows;
+cursor cur = { .x = 0, .y = 0 };
+
+int capacity = 10, actualrow = 0;
 int numofrows, numofcols;
+
+void movLeft(void) { cur.x--; GOTOYX(cur.y, cur.x); }
+void movRight(void) { cur.x++; GOTOYX(cur.y, cur.x); }
+void movUp(void) { cur.y--; GOTOYX(cur.y, cur.x); }
+void movDown(void) { cur.y++; GOTOYX(cur.y, cur.x); }
 
 int getRowsCols(void)
 {
@@ -56,9 +78,16 @@ void enableRawMode()
 
 void printFile(void)
 {
-  for(int i = 0; i < numofrows; i++)
+  for(int i = 0; i < numofrows && i < actualrow; i++)
   {
-    printf("%s\r",rows[i]->buffer);
+    if(rows[i]->len > numofcols)
+    {
+      printf("%.*s\r", numofcols, rows[i]->buffer);
+    }
+    else
+    {
+      printf("%s\r",rows[i]->buffer);
+    }
   }
 }
 
@@ -77,23 +106,20 @@ int editorOpenFile(char* path)
     rows[0]->buffer = strdup("thank you to use ntd");
     rows[0]->len = strlen(rows[0]->buffer);
 
+    actualrow++;
+
     fprintf(file, rows[0]->buffer);
-
-    return 1;
-
   }
   else
   {
-
     char *buffer = NULL;
     size_t len = 0;
 
-    int seenrow = 0;
     rows = malloc(capacity * sizeof(row *));
 
     while (getline(&buffer, &len, file) != -1)
     {
-      if (seenrow >= capacity)
+      if (actualrow >= capacity)
       {
         capacity *= 2;
         row **temp = realloc(rows, capacity * sizeof(row *));
@@ -105,17 +131,15 @@ int editorOpenFile(char* path)
         rows = temp;
       }
 
-      rows[seenrow] = malloc(sizeof(row));
-      rows[seenrow]->buffer = strdup(buffer);
-      rows[seenrow]->len = strlen(buffer);
+      rows[actualrow] = malloc(sizeof(row));
+      rows[actualrow]->buffer = strdup(buffer);
+      rows[actualrow]->len = strlen(buffer);
 
-      //printf("%s", rows[seenrow]->buffer);
+      //printf("%s", rows[actualrow]->buffer);
 
+      if (!rows[actualrow]) fprintf(stderr, "strdup went wrong");
 
-      rows[seenrow]->buffer = strdup(buffer);
-      if (!rows[seenrow]) fprintf(stderr, "strdup went wrong");
-
-      seenrow++;
+      actualrow++;
     }
 
     return 0;
@@ -124,22 +148,63 @@ int editorOpenFile(char* path)
   fclose(file);
 }
 
+void handleInput(char c)
+{
+  if (iscntrl(c))
+  {
+    if (c == 24) { /* exit ctrl-x */ }
+    if (c == 23) { /* save ctrl-w */ }
+
+    if (c == 27) // esc
+    {
+      char seq[2];
+      // Leggiamo i successivi due caratteri della sequenza se presenti
+      if (read(STDIN_FILENO, &seq[0], 1) == 1 && read(STDIN_FILENO, &seq[1], 1) == 1)
+      {
+        if (seq[0] == '[')
+        {
+          switch (seq[1])
+          {
+            case 'A': movUp(); break;
+            case 'B': movDown(); break;
+            case 'C': movRight(); break;
+            case 'D': movLeft(); break;
+          }
+        }
+      }
+      else 
+      {
+        //printf("Tasto: Solo ESC\r\n");
+      }
+    }
+
+  }
+  else
+  {
+    //printf("qua stampabile");
+  }
+}
+
 int main(int argc, char* args[])
 {
   if (argc > 1)
   {
+    setvbuf(stdout, NULL, _IONBF, 0);  // disattiva il buffering del stdout
+    fflush(stdout);
+
     enableRawMode();
     if(getRowsCols()) return 1;
     editorOpenFile(args[1]);
 
-    printf(CLEAR);
+    CLEAR;
     printFile();
+
+    GOTOYX(cur.y, cur.x);
 
     char c;
     while(read(STDIN_FILENO, &c, 1) == 1 && c != 'q')
     {
-    //  printf("%c", c);
-    //  fflush(stdout); // Forza la scrittura immediata a video
+      handleInput(c);
     }
 
     for(int i = 0; i < capacity; i++) { free(rows[i]); } free(rows);
