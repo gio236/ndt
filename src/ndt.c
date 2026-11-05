@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <ctype.h>
+#include <signal.h>
 
 /*
 • \033[N A: Muove il cursore Su di N righe.
@@ -15,6 +16,7 @@
 
 #define CLEAR printf("\033[H\033[2J")
 #define GOTOYX(row, col) printf("\033[%d;%dH", (row), (col))
+#define CLAMP(val, min, max) ((val) < (min) ? (min) : ((val) > (max) ? (max) : (val)))
 
 typedef struct
 {
@@ -28,17 +30,26 @@ typedef struct
   int y;
 } cursor;
 
-
 row **rows;
 cursor cur = { .x = 0, .y = 0 };
 
 int capacity = 10, actualrow = 0;
 int numofrows, numofcols;
 
-void movLeft(void) { cur.x--; GOTOYX(cur.y, cur.x); }
-void movRight(void) { cur.x++; GOTOYX(cur.y, cur.x); }
-void movUp(void) { cur.y--; GOTOYX(cur.y, cur.x); }
-void movDown(void) { cur.y++; GOTOYX(cur.y, cur.x); }
+volatile sig_atomic_t terminalResized = 0;
+
+void handle_sigwinch(int sig) {
+    (void)sig;
+    terminalResized = 1;
+}
+
+//funzioni momentanee saranno poi da rivedere quando iniziero ad implementare la parte della scrittura
+//perche attualmente andrei senza controlli a scrivere in aree della memoria che nn esistono, skippando spazi di righe
+
+void movLeft(void) { cur.x--; cur.x = CLAMP(cur.x, 1, numofcols); GOTOYX(cur.y, cur.x); }
+void movRight(void) { cur.x++; cur.x = CLAMP(cur.x, 1, numofcols); GOTOYX(cur.y, cur.x); }
+void movUp(void) { cur.y--; cur.y = CLAMP(cur.y, 1, numofrows); GOTOYX(cur.y, cur.x); }
+void movDown(void) { cur.y++; cur.y = CLAMP(cur.y, 1, numofrows); GOTOYX(cur.y, cur.x); }
 
 int getRowsCols(void)
 {
@@ -189,6 +200,8 @@ int main(int argc, char* args[])
 {
   if (argc > 1)
   {
+    signal(SIGWINCH, handle_sigwinch);
+
     setvbuf(stdout, NULL, _IONBF, 0);  // disattiva il buffering del stdout
     fflush(stdout);
 
@@ -205,6 +218,14 @@ int main(int argc, char* args[])
     while(read(STDIN_FILENO, &c, 1) == 1 && c != 'q')
     {
       handleInput(c);
+
+      if (terminalResized)
+      {
+        terminalResized = 0;
+        if(getRowsCols()) return 1;
+        CLEAR;
+        printFile();
+      }
     }
 
     for(int i = 0; i < capacity; i++) { free(rows[i]); } free(rows);
