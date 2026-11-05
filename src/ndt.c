@@ -1,7 +1,11 @@
 #include <stdio.h>
+#include <termios.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
+
+#define CLEAR "\033[H\033[2J"
 
 typedef struct
 {
@@ -11,6 +15,52 @@ typedef struct
 
 row **rows;
 int capacity = 1;
+
+int numofrows, numofcols;
+
+int getRowsCols(void)
+{
+  struct winsize w;
+  if (!ioctl(STDOUT_FILENO, TIOCGWINSZ, &w))
+  {
+    numofcols = w.ws_col;
+    numofrows = w.ws_row;
+  }else
+  {
+    fprintf(stderr, "error while retriving terminal's cols and rows");
+    return 1;
+  }
+
+  return 0;
+}
+
+struct termios origTermios; // original termios struct, to restore before exiting ndt
+
+void disableRawMode()
+{
+  tcsetattr(STDIN_FILENO, TCSAFLUSH, &origTermios);
+}
+
+void enableRawMode() 
+{
+  tcgetattr(STDIN_FILENO, &origTermios);
+  struct termios raw = origTermios;
+
+  atexit(disableRawMode);
+
+  raw.c_iflag &= ~(IXON | ICRNL);
+  raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
+  raw.c_oflag &= ~(OPOST);
+  tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+}
+
+void printFile(void)
+{
+  for(int i = 0; i < numofrows; i++)
+  {
+    printf("%s\r",rows[i]->buffer);
+  }
+}
 
 int editorOpenFile(char* path)
 {
@@ -78,7 +128,20 @@ int main(int argc, char* args[])
 {
   if (argc > 1)
   {
+    enableRawMode();
+    if(getRowsCols()) return 1;
     editorOpenFile(args[1]);
+
+    printf(CLEAR);
+    printFile();
+
+    char c;
+    while(read(STDIN_FILENO, &c, 1) == 1 && c != 'q')
+    {
+    //  printf("%c", c);
+    //  fflush(stdout); // Forza la scrittura immediata a video
+    }
+
     for(int i = 0; i < capacity; i++) { free(rows[i]); } free(rows);
   }
 
