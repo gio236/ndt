@@ -15,7 +15,7 @@
 */
 
 #define CLEAR printf("\033[H\033[2J")
-#define GOTOYX(row, col) printf("\033[%d;%dH", (row), (col))
+#define GOTOYX(row, col) printf("\033[%d;%dH", (row + 1), (col + 1))
 #define CLAMP(val, min, max) ((val) < (min) ? (min) : ((val) > (max) ? (max) : (val)))
 
 typedef struct
@@ -32,7 +32,11 @@ typedef struct
 
 row **rows;
 cursor cur = { .x = 0, .y = 0 };
+char *path;
 
+bool stay = true; // for quitting set this to false
+
+// capacity of the pointer struct pointer
 int capacity = 10, actualrow = 0;
 int numofrows, numofcols;
 
@@ -46,10 +50,10 @@ void handle_sigwinch(int sig) {
 //funzioni momentanee saranno poi da rivedere quando iniziero ad implementare la parte della scrittura
 //perche attualmente andrei senza controlli a scrivere in aree della memoria che nn esistono, skippando spazi di righe
 
-void movLeft(void) { cur.x--; cur.x = CLAMP(cur.x, 1, numofcols); GOTOYX(cur.y, cur.x); }
-void movRight(void) { cur.x++; cur.x = CLAMP(cur.x, 1, numofcols); GOTOYX(cur.y, cur.x); }
-void movUp(void) { cur.y--; cur.y = CLAMP(cur.y, 1, numofrows); GOTOYX(cur.y, cur.x); }
-void movDown(void) { cur.y++; cur.y = CLAMP(cur.y, 1, numofrows); GOTOYX(cur.y, cur.x); }
+void movLeft(void) { cur.x--; cur.x = CLAMP(cur.x, 0, numofcols); GOTOYX(cur.y, cur.x); }
+void movRight(void) { cur.x++; cur.x = CLAMP(cur.x, 0, numofcols); GOTOYX(cur.y, cur.x); }
+void movUp(void) { cur.y--; cur.y = CLAMP(cur.y, 0, numofrows); GOTOYX(cur.y, cur.x); }
+void movDown(void) { cur.y++; cur.y = CLAMP(cur.y, 0, numofrows); GOTOYX(cur.y, cur.x); }
 
 int getRowsCols(void)
 {
@@ -84,16 +88,22 @@ void enableRawMode()
   raw.c_iflag &= ~(IXON | ICRNL);
   raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
   raw.c_oflag &= ~(OPOST);
+
+  raw.c_cc[VMIN] = 1;  // Legge almeno 1 carattere prima di sbloccare read()
+  raw.c_cc[VTIME] = 0; // Nessun timeout di attesa
+
   tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
 void printFile(void)
 {
-  for(int i = 0; i < numofrows && i < actualrow; i++)
+
+  for(int i = 0; i < numofrows - 1 && i < actualrow; i++)
   {
+
     if(rows[i]->len > numofcols)
     {
-      printf("%.*s\r", numofcols, rows[i]->buffer);
+      printf("%.*s\r", numofcols, rows[i]->buffer); // il cursore shifta in automatico per il \n
     }
     else
     {
@@ -102,7 +112,22 @@ void printFile(void)
   }
 }
 
-int editorOpenFile(char* path)
+int editorSaveFile()
+{
+  FILE *file = fopen(path, "w");
+  if (file == NULL)
+  {
+    fprintf(stderr, "error while opening file");
+    return 1;
+  }
+  for(int i = 0; i < actualrow; i++)
+  {
+    fputs(rows[i]->buffer, file);
+  }
+  fclose(file);
+}
+
+int editorOpenFile()
 {
   FILE *file = fopen(path, "r");
 
@@ -159,12 +184,40 @@ int editorOpenFile(char* path)
   fclose(file);
 }
 
+int insertChar(char c)
+{
+  if(cur.y < actualrow && cur.x < rows[cur.y]->len) /* da aggiungiere shifted row e shifted col **TODO */
+  {
+    char *temp = realloc(rows[cur.y]->buffer, rows[cur.y]->len + 2); // add a char
+    if (!temp)
+    {
+      fprintf(stderr, "realloc went wrong while inserting new char");
+      return 1;
+    }
+
+    rows[cur.y]->buffer = temp;
+
+    // **TODO usare shiftrows e shiftcol
+    memmove(&(rows[cur.y]->buffer)[cur.x + 1], &(rows[cur.y]->buffer)[cur.x], rows[cur.y]->len - cur.x + 1);
+
+    rows[cur.y]->buffer[cur.x] = c;
+    rows[cur.y]->len += 1;
+
+    movRight();
+
+    return 0;
+  }
+
+  return -1;
+}
+
 void handleInput(char c)
 {
   if (iscntrl(c))
   {
-    if (c == 24) { /* exit ctrl-x */ }
-    if (c == 23) { /* save ctrl-w */ }
+
+    if (c == 24) { stay = false; }
+    if (c == 23) { editorSaveFile(); }
 
     if (c == 27) // esc
     {
@@ -185,21 +238,29 @@ void handleInput(char c)
       }
       else 
       {
-        //printf("Tasto: Solo ESC\r\n");
       }
     }
 
   }
   else
   {
-    //printf("qua stampabile");
+    //switch (insertChar(c)) { case 1: printf("errore"); break; case 0: printf("inserito"); break; case -1: printf("non inserito"); break; }
+
+    if(!insertChar(c))
+    {
+      CLEAR;
+      printFile();
+      GOTOYX(cur.y, cur.x);
+    }
   }
 }
 
-int main(int argc, char* args[])
+int main(int argc, char *args[])
 {
   if (argc > 1)
   {
+    path = args[1];
+
     signal(SIGWINCH, handle_sigwinch);
 
     setvbuf(stdout, NULL, _IONBF, 0);  // disattiva il buffering del stdout
@@ -207,7 +268,8 @@ int main(int argc, char* args[])
 
     enableRawMode();
     if(getRowsCols()) return 1;
-    editorOpenFile(args[1]);
+    editorOpenFile();
+
 
     CLEAR;
     printFile();
@@ -215,9 +277,10 @@ int main(int argc, char* args[])
     GOTOYX(cur.y, cur.x);
 
     char c;
-    while(read(STDIN_FILENO, &c, 1) == 1 && c != 'q')
+    while(read(STDIN_FILENO, &c, 1) == 1)
     {
       handleInput(c);
+      if (!stay) break;
 
       if (terminalResized)
       {
@@ -226,6 +289,9 @@ int main(int argc, char* args[])
         CLEAR;
         printFile();
       }
+
+      //printf("cur.y ==> %d, cur.x ==> %d", cur.y, cur.x);
+
     }
 
     for(int i = 0; i < capacity; i++) { free(rows[i]); } free(rows);
