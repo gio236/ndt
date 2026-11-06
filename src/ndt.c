@@ -8,10 +8,10 @@
 #include <signal.h>
 
 /*
-• \033[N A: Muove il cursore Su di N righe.
-• \033[N B: Muove il cursore Giù di N righe.
-• \033[N C: Muove il cursore a Destra di N colonne.
-• \033[N D: Muove il cursore a Sinistra di N colonne.
+  \033[N A: Muove il cursore Su di N righe.
+  \033[N B: Muove il cursore Giù di N righe.
+  \033[N C: Muove il cursore a Destra di N colonne.
+  \033[N D: Muove il cursore a Sinistra di N colonne.
 */
 
 #define CLEAR printf("\033[H\033[2J")
@@ -184,9 +184,36 @@ int editorOpenFile()
   fclose(file);
 }
 
+int removeChar()
+{
+  if(cur.y < actualrow && cur.x < rows[cur.y]->len && cur.y >= 0 && cur.x > 0) /* da aggiungiere shifted row e shifted col **TODO */
+  {
+    char *temp = realloc(rows[cur.y]->buffer, rows[cur.y]->len); // realloc the string with a byte less, cause the byte rn is len + 1, cause the \0
+    if (!temp)
+    {
+      fprintf(stderr, "realloc went wrong whileinserting new char");
+      return 1;
+    }
+
+    rows[cur.y]->buffer = temp;
+
+    // **TODO usare shiftrows e shiftcol
+    memmove(&(rows[cur.y]->buffer)[cur.x - 1], &(rows[cur.y]->buffer)[cur.x], rows[cur.y]->len - cur.x + 1);
+
+    //rows[cur.y]->buffer[cur.x] = c;
+    rows[cur.y]->len -= 1;
+
+    movLeft();
+
+    return 0;
+  }
+
+  return -1;
+}
+
 int insertChar(char c)
 {
-  if(cur.y < actualrow && cur.x < rows[cur.y]->len) /* da aggiungiere shifted row e shifted col **TODO */
+  if(cur.y < actualrow && cur.x < rows[cur.y]->len && cur.y >= 0 && cur.x >= 0) /* da aggiungiere shifted row e shifted col **TODO */
   {
     char *temp = realloc(rows[cur.y]->buffer, rows[cur.y]->len + 2); // add a char
     if (!temp)
@@ -216,10 +243,9 @@ void handleInput(char c)
   if (iscntrl(c))
   {
 
-    if (c == 24) { stay = false; }
-    if (c == 23) { editorSaveFile(); }
-
-    if (c == 27) // esc
+    if (c == 24) { stay = false; } // ctrl-x
+    else if (c == 23) { editorSaveFile(); } // ctrl-w
+    else if (c == 27) // esc
     {
       char seq[2];
       // Leggiamo i successivi due caratteri della sequenza se presenti
@@ -236,8 +262,14 @@ void handleInput(char c)
           }
         }
       }
-      else 
+    }
+    else if (c == 8 || c == 127) // BS backspace
+    {
+      if(!removeChar())
       {
+        CLEAR;
+        printFile();
+        GOTOYX(cur.y, cur.x);
       }
     }
 
